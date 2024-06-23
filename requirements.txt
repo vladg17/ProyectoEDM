@@ -1,7 +1,7 @@
 pandas
 streamlit
 folium
-folium.plugins
+geopy
+opencage
+requests
 streamlit_folium
-geopy.distance
-opencage.geocoder
