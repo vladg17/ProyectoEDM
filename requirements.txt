@@ -1,7 +1,7 @@
 pandas
 streamlit
 folium
-MarkerCluster
-folium_static
-geodesic
-OpenCageGeocode
+folium.plugins
+streamlit_folium
+geopy.distance
+opencage.geocoder
