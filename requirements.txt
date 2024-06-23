@@ -1,0 +1,7 @@
+pandas
+streamlit
+folium
+MarkerCluster
+folium_static
+geodesic
+OpenCageGeocode
