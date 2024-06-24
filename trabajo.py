@@ -5,13 +5,14 @@ from folium.plugins import MarkerCluster
 from streamlit_folium import folium_static
 from geopy.distance import geodesic
 from opencage.geocoder import OpenCageGeocode
+import requests
 
 # Función para cargar los datos de los centros de discapacidad
 def load_centros(filepath):
     try:
         return pd.read_csv(filepath, sep=';', encoding='utf-8')
     except pd.errors.ParserError as e:
-        st.error(f"Error leyendo el archivo {filepath}: {e}")
+        print(f"Error leyendo el archivo {filepath}: {e}")
         return pd.read_csv(filepath, sep=';', encoding='utf-8', error_bad_lines=False)
 
 # Función para dividir la columna 'geo_point_2d' en 'x' e 'y'
@@ -39,14 +40,15 @@ parkings_mr = split_geo_point(parkings_mr)
 st.set_page_config(page_title="Centros de Discapacidad y Parkings", layout="wide")
 
 # Título de la aplicación
-st.markdown("<h1 style='text-align: center; color: #4CAF50;'>Centros de Discapacidad y Parkings de Movilidad Reducida</h1>", unsafe_allow_html=True)
+st.title("Centros de Discapacidad y Parkings de Movilidad Reducida")
 
 # Descripción de la aplicación
 st.markdown("""
-<div style='text-align: center;'>
-    <p>Esta aplicación te ayudará a encontrar centros de discapacidad y parkings de movilidad reducida cercanos.</p>
-    <p>Puedes buscar un centro específico o una dirección, de forma que te mostraremos los parkings cercanos y la distancia.</p>
+<div style="text-align: center; font-size: 24px; font-weight: bold; color: #4CAF50;">
+    Encuentra Centros de Discapacidad y Parkings Cercanos
 </div>
+Esta aplicación te ayudará a encontrar centros de discapacidad y parkings de movilidad reducida cercanos.
+Puedes buscar un centro específico o una dirección, de forma que te mostraremos los parkings cercanos y la distancia estimada.
 """, unsafe_allow_html=True)
 
 # Selección del tipo de búsqueda
@@ -70,20 +72,29 @@ radio_busqueda = st.sidebar.slider("Radio de búsqueda (metros)", min_value=50, 
 opencage_key = 'f1c6a77fb5fb4e5aa55916161cff9d35'  # Reemplaza con tu clave API de OpenCage
 geocoder = OpenCageGeocode(opencage_key)
 
+# Función para encontrar la dirección a partir de las coordenadas
+def get_address_from_coords(coords):
+    result = geocoder.reverse_geocode(coords[0], coords[1])
+    if result and len(result):
+        return result[0]['formatted']
+    else:
+        return "Dirección no encontrada"
+
 # Función para encontrar parkings cercanos
-def find_nearby_parkings(parkings, radio, centro_seleccionado_coords):
+def find_nearby_parkings(centros, parkings, radio, centro_seleccionado_coords):
     nearby_parkings = []
     for _, parking in parkings.iterrows():
-        parking_coords = (parking['y'], parking['x'])
+        parking_coords = tuple(map(float, parking['geo_point_2d'].split(',')))
         distance = geodesic(centro_seleccionado_coords, parking_coords).meters
         if distance <= radio:
-            parking['Distancia al centro (en metros)'] = distance
+            parking['Distancia al centro (en metros)'] = round(distance)
+            parking['Dirección'] = get_address_from_coords(parking_coords)
             nearby_parkings.append(parking)
     
     if nearby_parkings:
         return pd.DataFrame(nearby_parkings).drop_duplicates()
     else:
-        return pd.DataFrame(columns=['Nombre Places / Número Plazas', 'geo_point_2d', 'Distancia al centro (en metros)'])  # Retornar un DataFrame vacío si no se encuentran parkings cercanos
+        return pd.DataFrame(columns=['Nombre Places / Número Plazas', 'Dirección', 'Distancia al centro (en metros)'])  # Retornar un DataFrame vacío si no se encuentran parkings cercanos
 
 # Función para encontrar centros cercanos a una dirección
 def find_nearest_centro(address, centros):
@@ -99,19 +110,19 @@ def find_nearest_centro(address, centros):
 # Mostrar los resultados en función del tipo de búsqueda
 if tipo_busqueda == "Centro específico":
     centro_especifico_nombre = st.sidebar.selectbox("Seleccione el centro", centros['equipamien'].unique())
-    centro_seleccionado = centros[centros['equipamien'] == centro_especifico_nombre].iloc[0]
-    centro_seleccionado_coords = (centro_seleccionado['y'], centro_seleccionado['x'])
-    parkings_cercanos = find_nearby_parkings(parkings_mr, radio_busqueda, centro_seleccionado_coords)
+    centro_seleccionado_coords = centros.loc[centros['equipamien'] == centro_especifico_nombre, ['y', 'x']].iloc[0]
+    parkings_cercanos = find_nearby_parkings(centros, parkings_mr, radio_busqueda, centro_seleccionado_coords)
     
-    # Mostrar el nombre del centro
-    st.header(f"Centro Seleccionado: {centro_especifico_nombre}")
-    
+    # Ordenar los parkings por distancia al centro
+    if not parkings_cercanos.empty:
+        parkings_cercanos = parkings_cercanos.sort_values(by='Distancia al centro (en metros)')
+
     # Crear el mapa
-    m = folium.Map(location=[centro_seleccionado['y'], centro_seleccionado['x']], zoom_start=14)
+    m = folium.Map(location=[centro_seleccionado_coords['y'], centro_seleccionado_coords['x']], zoom_start=14)
     
     # Agregar el centro seleccionado al mapa
     folium.Marker(
-        location=[centro_seleccionado['y'], centro_seleccionado['x']],
+        location=centro_seleccionado_coords,
         popup=f"{centro_especifico_nombre}",
         icon=folium.Icon(color='blue', icon='info-sign', prefix='fa')
     ).add_to(m)
@@ -128,11 +139,11 @@ if tipo_busqueda == "Centro específico":
     # Mostrar el mapa en Streamlit
     folium_static(m)
     
-    # Mostrar los datos en tabla
-    st.subheader("Parkings Cercanos")
+    # Mostrar el nombre del centro y la tabla de parkings cercanos
+    st.subheader(f"Parkings Cercanos al Centro: {centro_especifico_nombre}")
     if not parkings_cercanos.empty:
         parkings_cercanos = parkings_cercanos.rename(columns={'geo_point_2d': 'Coordenadas de la plaza'})
-        st.dataframe(parkings_cercanos[['Nombre Places / Número Plazas', 'Coordenadas de la plaza', 'Distancia al centro (en metros)']])
+        st.dataframe(parkings_cercanos[['Nombre Places / Número Plazas', 'Dirección', 'Distancia al centro (en metros)']])
     else:
         st.info("No se encontraron parkings cercanos.")
 
@@ -159,12 +170,16 @@ elif tipo_busqueda == "Dirección":
             ).add_to(m)
 
             # Buscar parkings cercanos al centro más cercano
-            parkings_cercanos = find_nearby_parkings(parkings_mr, radio_busqueda, (nearest_centro['y'], nearest_centro['x']))
-            
-            # Mostrar los parkings cercanos en el mapa
+            parkings_cercanos = find_nearby_parkings(centros, parkings_mr, radio_busqueda, (nearest_centro['y'], nearest_centro['x']))
+
+            # Ordenar los parkings por distancia al centro
+            if not parkings_cercanos.empty:
+                parkings_cercanos = parkings_cercanos.sort_values(by='Distancia al centro (en metros)')
+
+            # Agregar parkings al mapa
             parkings_cluster = MarkerCluster(name="Parkings de Movilidad Reducida").add_to(m)
             for _, parking in parkings_cercanos.iterrows():
-                    folium.Marker(
+                folium.Marker(
                     location=[parking['y'], parking['x']],
                     popup=f"Parking - {parking['Nombre Places / Número Plazas']}",
                     icon=folium.Icon(color='green', icon='car', prefix='fa')
@@ -173,15 +188,13 @@ elif tipo_busqueda == "Dirección":
             # Mostrar el mapa en Streamlit
             folium_static(m)
             
-            # Mostrar los parkings cercanos en tabla
-            st.subheader(f"Parkings Cercanos al Centro más Cercano: {nearest_centro['equipamien']}")
+            # Mostrar el nombre del centro más cercano y la tabla de parkings cercanos
+            st.subheader(f"Centro más Cercano: {nearest_centro['equipamien']}")
+            st.write(f"Distancia desde la dirección ingresada: {round(nearest_centro['distance'])} metros")
             if not parkings_cercanos.empty:
                 parkings_cercanos = parkings_cercanos.rename(columns={'geo_point_2d': 'Coordenadas de la plaza'})
-                st.dataframe(parkings_cercanos[['Nombre Places / Número Plazas', 'Coordenadas de la plaza', 'Distancia al centro (en metros)']])
+                st.dataframe(parkings_cercanos[['Nombre Places / Número Plazas', 'Dirección', 'Distancia al centro (en metros)']])
             else:
                 st.info("No se encontraron parkings cercanos.")
-            
-            # Mostrar la distancia desde la dirección ingresada al centro más cercano
-            st.sidebar.markdown(f"Distancia al centro más cercano: {nearest_centro['distance']/1000:.2f} km")
         else:
             st.error("No se encontró la dirección especificada.")
